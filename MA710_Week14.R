@@ -37,6 +37,7 @@ rec.rbind.fill = function(a.df.list, rec.level=0) {
                         mc.preschedule=FALSE))}
 
 system.time({
+<<<<<<< HEAD
   if(exists('loans.lenders.df')) rm(loans.lenders.df)
   loans.lenders.df = 
     rbind.fill(
@@ -47,11 +48,26 @@ system.time({
                           data.frame))},
                mc.cores=detectCores()
                ))})
+=======
+  rm(loans.lenders.df)
+  loans.lenders.df = 
+    rbind.fill(
+      mclapply(loans_lendersFilelist, 
+               function(x) {
+                 rbind.fill(
+                   lapply(get.json.ds(x),
+                          data.frame))},
+               mc.cores=detectCores()))})
+>>>>>>> 264d19c8cd434e653c4654e78766b59e6a61b33b
 # Elapsed time: 26s (lapply, 20 files)
 # Elapsed time: 36s (mclapply outside, all files)
 
 # Before this works
+<<<<<<< HEAD
 # After this needs to be checked, reworked or tossed
+=======
+# After this needs to be checked
+>>>>>>> 264d19c8cd434e653c4654e78766b59e6a61b33b
 
 start_time = Sys.time()
 loans.ds = 
