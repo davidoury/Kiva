@@ -1,0 +1,935 @@
+\documentclass[12pt]{article}
+\usepackage[parfill]{parskip} % No paragraph indentiation 
+\usepackage[colorlinks]{hyperref}
+
+\begin{document}
+
+\title{The Kiva Dataset} 
+\author{David Oury}
+\date{
+\today
+\\ Bentley University
+}
+
+\maketitle
+
+\tableofcontents
+\clearpage
+
+<<setwd, echo=FALSE>>=
+opts_chunk$set(fig.align='center', comment=NA, fig.width=6, fig.height=3.5, background=c(1,1,1))
+@
+% opts_chunk$set(out.height='2.5in', out.width='2.5in', fig.align='center', comment=NA, fig.width=6, fig.height=3.5, background=c(1,1,1))
+
+<<options, include=FALSE, cache=FALSE>>=
+options(tidy=TRUE, width=60)
+@
+
+
+<<load-vars, echo=FALSE>>=
+setwd('/users/home/doury/Dropbox/LUG - Private/Kiva')
+@
+
+\section{Introduction}
+
+\emph{Kiva.org} is a microlending organization designed to connect lenders and those who need loans. 
+From their website, \emph{Kiva} is
+\begin{quote}
+a non-profit organization with a mission to connect people through lending to alleviate poverty. Leveraging the internet and a worldwide network of microfinance institutions, Kiva lets individuals lend as little as \$25 to help create opportunity around the world.
+\end{quote}
+Their datasets concerning loans and lenders are available to developers through \url{http://build.kiva.org}.
+In this report we investigate these datasets using the data mining techniques of assocation rules and cluster analysis.
+Three datasets are analyzed: a \emph{loans} dataset, a \emph{lenders} dataset and a \emph{loans-lenders} dataset which lists the lenders contributing to each loan.
+
+Our report will document these three datasets, summarize their variables and apply data mining techniques to learn more about the loans, borrowers and lenders who contribute to and benefit from the \emph{Kiva} mission. 
+
+Our analysis requires the following \textbf{R} libraries.
+<<libraries-needed, message=FALSE>>=
+library(RJSONIO) # fromJSON
+library(plyr) # rbind.fill
+library(parallel) # mclapply
+library(ggplot2) # qplot
+library(arules) # apriori (assocation rules)
+@
+
+
+\section{Dataset descriptions}
+
+\subsection{Files \& formats}
+
+The public \emph{Kiva} datasets are make available in two formats. 
+First, as a collection of JSON datafiles, which we describe in this section. 
+Second, via an API, which we do not describe in this section. 
+
+We describe the format of these files and the information they contain.
+Our descriptions are pulled from the \href{build.kiva.org}{Kiva Developers site} and from the \href{http://stat.duke.edu/resources/datasets/kiva-loans}{Department of Statistics Science} at Duke University.
+When neither are available we provide a description based on inspecting the data. 
+
+<<invisible-baseDir, echo=FALSE>>=
+baseDir = "/data/Kiva/Data"
+@
+The three Kiva datasets consist of JSON files stored in three subdirectories (\textbf{loans}, \textbf{lenders}, \textbf{loans\_lenders}) of \textbf{baseDir}.
+<<baseDir>>=
+baseDir = "/data/Kiva/Data"
+@
+A character vector of the filenames in each dataset is obtained via the \textbf{list.files} command whose first parameter is the name of the directory containing the files to list. 
+The second parameter \textbf{full.names=TRUE} determines that the full path names of the files are returned. 
+<<File-list>>=
+loansFilelist = 
+  list.files(paste(baseDir,sep='/','loans'),
+             full.names=TRUE)
+lendersFilelist = 
+  list.files(paste(baseDir,sep='/','lenders'), 
+             full.names=TRUE)
+loans_lendersFilelist = 
+  list.files(paste(baseDir,sep='/','loans_lenders'), 
+             full.names=TRUE)
+@
+
+The first two entries of each filename vector are displayed. 
+<<initial-file-list>>=
+loansFilelist[1:2]
+lendersFilelist[1:2]
+loans_lendersFilelist[1:2]
+@
+
+Each of these files contains two JSON objects. 
+The first object contains metadata and the second object consists of a sequence of JSON records. 
+Each record corresponds to a loan, a lender or a lender-loan pair depending on the dataset.
+We describe below a function which reads this data into an \textbf{R} list structure and then describe the list structure produced for each dataset. 
+
+The purpose of the \textbf{list.from.json} function (below) is to read one of these JSON datafiles and return the data it contains as an \textbf{R} list. 
+It uses the \textbf{fromJSON} function (of the \textbf{RJSONIO} library) which takes as input a file name and returns the JSON data it contains in the form of an \textbf{R} list.
+<<list.from.json>>=
+list.from.json = function(aFile) {
+  fromJSON(aFile, nullValue=NA)[[2]]
+}
+@
+Notice that the $\mathbf{nullValue=NA}$ parameter determines that \textbf{NULL} values are replaced with \textbf{NA} and that the \textbf{[[2]]} in the code indicates that only the second JSON object containing the data records is retrieved and that the meta data is ignored.
+
+The format and contents of the lists produced for each dataset are described below in sections \ref{secloans}, \ref{seclenders} and \ref{secloanslenders}.
+
+\subsection{Loans dataset} \label{secloans}
+
+We describe the \emph{loans} dataset in terms of the list structure produced by the \textbf{list.from.json} function.
+Each record of the \emph{loans} dataset corresponds to a specific loan and is a top level element in the list returned by the \textbf{list.from.json} function.
+A list structure containing the details of the first loan of the first file of the \emph{loans} dataset is stored in variable \textbf{aLoan}.
+<<examples-structure-loans>>=
+aLoan = list.from.json(loansFilelist[1])[[1]]
+@
+We list the names of the fields of this first loan record. 
+<<names-aLoan>>=
+names(aLoan)
+@
+
+The loan record contains several identification fields including the unique ID for the loan (\textbf{id}) and the ID of the \emph{field partner} responsible for dispursing the loan and collecting payments (\textbf{partner\_id}).
+More information on field partners can be found at \url{http://www.kiva.org/partners}.
+The first name of the borrower requesting the loan is recorded in the \textbf{name} field. 
+The \textbf{borrower} field contains a list with one item for each borrower consisting of the borrower's first name, last name and gender. 
+<<>Loan-name-id>>=
+aLoan$id 
+aLoan$partner_id
+aLoan$name
+aLoan$borrower
+@
+
+Each loan record includes location information with the geographical coordinates of the business funded by the loan.
+<<aLoan-location>>=
+str(aLoan$location)
+@
+The \textbf{level} field indicates whether the coordinates are of the town or country specified. 
+
+The \textbf{sector} and \textbf{activity} fields are categorical variables which indicate the economic area and activity type of the business requesting the loan. 
+<<aLoan-sector-activity>>=
+aLoan$sector
+aLoan$activity
+@
+
+The \textbf{use} and \textbf{description} fields provide textual descriptions of the intended use of the loan and the background of the borrower and their business.
+<<aLoan-use-description>>=
+strwrap(aLoan$use)
+strwrap(aLoan$description)
+@
+
+Several pieces of financial information about each loan are recorded. 
+The payment status of each loan is stored in the categorical variable \textbf{status}.
+The logical variable \textbf{delinquent} indicates whether the loan is delinquent.
+<<aLoan-status>>=
+aLoan$status
+aLoan$delinquent
+@
+The variables  \textbf{loan\_amount},  \textbf{funded\_amount}, \textbf{basket\_amount} and \textbf{paid\_amount} indicate the amount requested for the loan, the amount funded by \emph{Kiva} lenders, the amount of the loan which lenders have saved in shopping baskets, but have not confirmed as purchased, and the amount of the loan which has been paid off. 
+<<aLoan-funded_amount>>=
+aLoan$loan_amount
+aLoan$funded_amount
+aLoan$basket_amount
+aLoan$paid_amount
+@
+
+The \textbf{payments} field contains a list with one item per payment. 
+The first loan has \Sexpr{length(aLoan$payments)} payments. 
+The field names and values for the first payment are listed. 
+<<aLoan-payments>>=
+length(aLoan$payments)
+aPayment = aLoan$payments[[1]]
+str(aPayment)
+@
+
+The \textbf{terms} field contains a list with the terms of the loan, such as \textbf{disbursal\_date}, \textbf{disbursal\_amount} and \textbf{repayment\_term}.
+All field names and values for the \textbf{term} field of the first loan are listed.
+<<aLoan-terms>>=
+aLoan$terms
+@
+
+The number of lenders that contributed to the loan are recorded in the \textbf{lender\_count} field.
+<<aLoan-lender_count>>=
+aLoan$lender_count
+@
+
+The \textbf{journal\_totals} field indicates the number of journal entries and the number of bulk journal entries for the loan. 
+<<aLoan-journal_totals>>=
+aLoan$journal_totals
+@
+
+Date information is recorded for each loan. 
+The date the loan was posted to \emph{Kiva} (\textbf{posted\_date}), was fully funded on \emph{Kiva} (\textbf{funded\_date}) and was paid back in full by the borrower (\textbf{paid\_date}). 
+<<aLoan-dates>>=
+aLoan$posted_date
+aLoan$funded_date
+aLoan$paid_date
+@
+
+No documentation has been found for the fields:
+\begin{itemize}
+\item
+\textbf{image} 
+\item
+\textbf{video}  
+\item
+\textbf{currency\_exchange\_loss\_amount}
+\item
+\textbf{bonus\_credit\_eligibility} 
+\item
+\textbf{planned\_expiration\_date}
+\end{itemize}
+
+In Section \ref{secdataframes} the \textbf{loans.df} dataframe is created from the import files of the \emph{loans} dataset. 
+Only those fields/variables used in our analysis are included in the dataframe. 
+
+%subsection{Lenders dataset}
+\subsection{Lenders dataset} \label{seclenders}
+
+We describe in this section the \emph{lenders} dataset in terms of the list structure produced by the \textbf{list.from.json} function. 
+Each record of the \emph{lenders} dataset corresponds to a single lender and is a top level element in the list returned by the \textbf{list.from.json} function.
+The list structure corresponding to the details of the first lender of the first file of the \emph{lenders} dataset is stored in the \textbf{aLender} variable.
+<<aLender-var>>=
+aLender = list.from.json(lendersFilelist[1])[[1]]
+@
+We list the names of the fields of this first lender record.
+<<aLender-names>>=
+names(aLender)
+@
+
+Each lender record contains identification information such as the lender's name (\textbf{name}), a unique lender ID (\textbf{lender\_id}, \textbf{uid}).
+<<aLender-basic>>=
+aLender$name
+aLender$lender_id 
+@
+
+Location information is provided as the lender's country code  (\textbf{country\_code}) and city  (\textbf{whereabouts}). The latter does not contain the country name, but does include the two character state code for US cities. 
+<<aLender-location>>=
+aLender$country_code
+aLender$whereabouts
+@
+
+The number of loans which the lender has contributed to is recorded in the \textbf{loan\_count} field. 
+<<aLender-loan_count>>=
+aLender$loan_count
+@
+
+The date when the lender created an account on \emph{Kiva.org} is recorded in the \textbf{member\_since} field.
+<<aLender-date>>=
+aLender$member_since
+@
+
+There are several textual description fields: \textbf{loan\_because} which contains a short description written by the lender of their reason for lending; \textbf{occupation} which is a one or two word title of the lender's occupation;   \textbf{occupation\_info} which is a one line description of the lender's occupation.
+<<aLender-text>>=
+strwrap(aLender$loan_because)
+strwrap(aLender$occupation)
+strwrap(aLender$occupational_info)
+@
+
+No documention has been found for the \textbf{inviter\_id} and \textbf{invitee\_count} fields.
+The \textbf{inviter\_id} may be the lender ID that invited this lender to \emph{Kiva}. 
+The \textbf{invitee\_count} may be the number of invitations sent by this lender. 
+<<aLender-inviteree>>=
+aLender$inviter_id 
+aLender$invitee_count
+@
+
+In Section \ref{secdataframes} the \textbf{lenders.df} dataframe is created from the import files of the \emph{lenders} dataset. 
+Only those fields/variables used in our analysis are included in the dataframe. 
+
+%subsection{Loans and lenders dataset}
+\subsection{Loans and lenders dataset} \label{secloanslenders}
+
+We describe in this section the \emph{loans-lenders} dataset in terms of the list structure produced by the \textbf{list.from.json} function. 
+Each record of the \emph{loans-lenders} dataset consists of a loan id (\textbf{id}) and a character vector of the lender IDs (\textbf{lender\_ids}) who contributed  to the loan.
+<<loan-lenders>>=
+aLoanLender = list.from.json(loans_lendersFilelist[1])[[3]]
+aLoanLender
+@
+In Section \ref{secdataframes} the \textbf{lenders.df} dataframe is created from the import files of the \emph{lenders} dataset. 
+The record displayed above will produce two rows of this dataframe.
+
+%section{Creating dataframes}
+\section{Creating dataframes}
+
+% The commands below take too long to execute 
+% The <dataframes> file is saved below after
+% the preprocessing stage
+<<load-dataframes, echo=FALSE, eval=TRUE>>=
+load(file="dataframes")
+@
+
+The information which we plan to analyze from each dataset is converted into a dataframe because \textbf{R} and its libraries are designed primarily to operate on dataframes. 
+The \emph{loans} and the \emph{lenders} datasets are converted using the function \textbf{df.from.list} and the \textbf{R} functions \textbf{rbind.fill}, \textbf{lapply} and \textbf{mclapply}.
+We begin by describing the function \textbf{df.from.list} using an example list.
+<<df.from.list>>=
+df.from.list = function(aList, fieldVector) { 
+  data.frame(rbind(unlist(aList[fieldVector])),
+             stringsAsFactors=FALSE)
+}
+exampleList = list(field1 = list( subfieldA='a', subfieldB='b'), 
+                   field2 = 2, ignore=0)
+@
+The \textbf{df.from.list} function takes as input a list (\textbf{aList}) and a character vector (\textbf{fieldVector}) of some of the field names from \textbf{aList}.
+Using the example list as input the \textbf{df.from.list} function returns the following single row dataframe with three columns.
+<<unlist>>=
+df.from.list(exampleList,c('field1','field2'))
+@
+Recall that JSON data is often hierarchical (not \emph{flat}) and that the \textbf{R} lists which contain converted hierarchical JSON data are also heirarchical. 
+The \textbf{unlist} function \emph{flattens} this information into a non-hierarchical list, which the \textbf{rbind} function converts into a matrix,  which is returned as a dataframe with a single row. 
+
+Recall that the \textbf{rbind.fill} function takes as input a list of dataframes and returns a single dataframe whose rows are those of the input dataframes. 
+The \textbf{lapply} function takes as input a list and a function and returns the list formed by applying the function to each element of the list. 
+The \textbf{mclapply} function is a parallelized version of the \textbf{lapply} function where each function application is performed in a separate process. 
+
+The dataframe \textbf{loans.df} is created by the command:
+<<create-loans.df, eval=FALSE>>=
+  keep.fields = c('id','partner_id','status','delinquent',
+                  'loan_amount','sector','activity','funded_date','location')
+  loans.df = 
+    rbind.fill(
+      mclapply(X=loansFilelist,
+               FUN=function(x) {
+                 rbind.fill(
+                   lapply(list.from.json(x),
+                          function(y) {df.from.list(y,keep.fields)}))},
+               mc.cores=detectCores()))
+@
+In brief, each JSON record of each file of the dataset is transformed into a one row dataframe (using \textbf{df.from.list}) and these dataframes are collected into a single dataframe (using \textbf{rbind.fill}.)
+The only difference in creating the \textbf{lenders.df} dataframe is the character vector \textbf{lendersFilelist} of filenames. 
+The dataframe \textbf{lenders.df} is created by the command:
+<<create-lenders.df, eval=FALSE>>=
+  keep.fields = c('lender_id','country_code','loan_count',
+                  'loan_because','member_since')
+  lenders.df = 
+    rbind.fill(
+      mclapply(X=lendersFilelist, 
+               FUN=function(x) {
+                 rbind.fill(
+                   lapply(list.from.json(x),
+                          function(y) {df.from.list(y,keep.fields)}))},
+               mc.cores=detectCores()))
+@
+
+The \emph{loans-lenders} dataset is converted using the \textbf{df.or.null} function which returns NULL if its input contains any missing values and otherwise returns a dataframe (with a single row.)
+<<loans.lenders.helper>>=
+df.or.null = function(x) { if(all(!is.na(x)))  data.frame(x) else NULL }
+@
+This function is demonstrated using the third record of the first file of the \emph{loans-lenders} dataset. 
+<<df.or.null-example>>=
+aLoanLender = list.from.json(loans_lendersFilelist[1])[[3]]
+aLoanLender
+df.or.null(aLoanLender)
+@
+Notice that if any fields of the input list are NULL then the output is NULL.
+<<df.or.null>>=
+aLoanLender = list.from.json(loans_lendersFilelist[1])[[1]]
+aLoanLender
+df.or.null(aLoanLender)
+@
+The \textbf{rbind.full} function ignores NULL input. 
+
+Dataframe \textbf{loans.lenders.df} is created with the command:
+<<create-loans.lenders.df, eval=FALSE>>=
+  loans.lenders.df = 
+    rbind.fill(
+      mclapply(X=loans_lendersFilelist, 
+               FUN=function(x) {
+                 rbind.fill(
+                   lapply(list.from.json(x),
+                          df.or.null))},
+               mc.cores=detectCores()))
+@
+
+
+%section{Preprocessing}
+\section{Preprocessing}
+
+%subsection{Loans dataframe: loans.df}
+\subsection{Loans dataframe: loans.df}
+
+The columns of the dataframes created in the previous section are formatted as character data even though they contain numeric, factor or date values. 
+This reduced the time required to create each dataframe from five minutes to less than one minute.
+This requires that some columns are reformatted. 
+
+The \textbf{id}, \textbf{partner\_id} and \textbf{loan\_amount} variables are numeric. 
+<<loans-numeric, eval=FALSE>>=
+loans.df$id = as.numeric(loans.df$id)
+loans.df$partner_id = as.numeric(loans.df$partner_id) 
+loans.df$loan_amount = as.numeric(loans.df$loan_amount)
+@
+The \textbf{NA} values in the \textbf{delinquent} column are recoded to \textbf{FALSE}. 
+<<loans-factor, eval=FALSE>>=
+loans.df$delinquent[is.na(loans.df$delinquent)] = FALSE
+@
+
+The following are factor variables: \textbf{status}, \textbf{delinquent}, \textbf{sector} and \textbf{location.country\_code}. 
+<<eval=FALSE>>=
+loans.df$status = as.factor(loans.df$status)
+loans.df$activity = as.factor(loans.df$activity)
+loans.df$delinquent = as.factor(loans.df$delinquent)
+loans.df$sector = as.factor(loans.df$sector)
+loans.df$location.country_code = as.factor(loans.df$location.country_code)
+@
+
+The \textbf{funded\_date} variable contains dates.
+<<loans.funded-date, eval=FALSE>>=
+loans.df$funded_date = as.Date(loans.df$funded_date)
+@
+
+An ordered factor variable \textbf{loan\_size} is created from the \textbf{loan\_amount} variable with value \textbf{Small} for loan amounts under \$500, with value \textbf{Medium} for amounts between \$500 and \$1000, with value \textbf{Large} for amounts between \$1000 and \$5000, and with value \textbf{Extra} for amounts greater than \$5000.
+<<eval=FALSE>>=
+loans.df$loan_size = 
+  ordered(cut(loans.df$loan_amount,
+              c(-Inf,500,1000,5000,Inf)),
+          labels = c('Small','Medium','Large','Extra'))
+@
+
+The following columns are removed from the dataframe. 
+<<loans.NULL, eval=FALSE>>=
+loans.df$location.country = NULL
+loans.df$location.town = NULL
+loans.df$location.geo.level = NULL
+loans.df$location.geo.pairs = NULL
+loans.df$location.geo.type = NULL
+@
+The final structure of the \textbf{loans.df} dataframe is displayed. 
+<<loans.df-str>>=
+str(loans.df)
+@
+
+
+% The \textbf{use} variable contains descriptions of the intended use of the loan. 
+% It has too many values to be useful as a categorical variable.
+% Most values though contain enough text to apply text mining techniques with a majority of values containing more than 30 characters. 
+% The character set is changed to \textbf{UTF-8}.
+% <<loans-use, message=FALSE>>=
+% loans.df$use = as.character(iconv(loans.df$use, to="UTF-8"))
+% length(unique(loans.df$use))
+% qplot(log10(nchar(loans.df$use)))
+% @
+
+%subsection{Lenders dataframe: lenders.df}
+\subsection{Lenders dataframe: lenders.df}
+
+The columns of the \textbf{lenders.df} dataframe created in the previous section are formatted as character data even though they contain variables that should be coded as numeric or factor. 
+This reduced the time required to create the dataframe from five minutes to less than one minute.
+This requires that some columns are reformatted. 
+
+The \textbf{lender\_id} and \textbf{country\_code} variables are formatted as factor variables. 
+<<lenders.df-factor>>=
+lenders.df$lender_id =  factor(lenders.df$lender_id)
+lenders.df$country_code = factor(lenders.df$country_code)
+@
+The \textbf{loan\_count} variable is numeric. 
+<<lenders.df-loancount>>=
+lenders.df$loan_count = as.numeric(lenders.df$loan_count)
+@
+
+The \textbf{loan\_because} variable is converted into the \textbf{UTF-8} format. 
+<<lenders.df-pre-loanbecause>>=
+lenders.df$loan_because = iconv(lenders.df$loan_because, to="UTF-8")
+@
+
+The \textbf{member\_since} variable contains dates. 
+<<lender.df-membersince>>=
+lenders.df$member_since = as.Date(lenders.df$member_since)
+@
+
+The final structure of the \textbf{lenders.df} dataframe is displayed.
+<<lenders.df-str>>=
+str(lenders.df)
+@
+
+%subsection{Loans \& lenders dataframe: loans.lenders.df}
+\subsection{Loans \& lenders dataframe: loans.lenders.df}
+
+Preprocessing for the \textbf{loans.lenders.df} requires only that the
+\textbf{lender\_ids} variable is recoded as a factor variable.
+<<loans.lenders.df-factor>>=
+loans.lenders.df$lender_ids = factor(loans.lenders.df$lender_ids)
+@
+The final structure of the \textbf{loans.lenders.df} dataframe is displayed.
+<<loans.lenders.df-str>>=
+str(loans.lenders.df)
+@
+
+<<save-dataframes, echo=FALSE, eval=FALSE>>=
+save(file="dataframes", 
+     list=c('loans.df','lenders.df','loans.lenders.df'))
+@
+
+%section{Variable summaries}
+\section{Variable summaries}
+
+The sections below contain variable summaries of each variable in the dataframes.
+
+%subsection{Loans dataframe: loans.df}
+\subsection{Loans dataframe: loans.df}
+
+<<echo=FALSE>>=
+loans.df.dim = dim(loans.df)
+@
+
+Notice that the \textbf{loans.df} dataframe contains $\Sexpr{loans.df.dim[1]}$ observations and $\Sexpr{loans.df.dim[2]}$ variables. 
+Each observation corresponds to a loan. 
+<<loans.dim>>=
+dim(loans.df) 
+@
+
+The dataframe contains two identifier variables \textbf{id} and \textbf{parter\_id}.
+<<length-unique-loa>>=
+length(unique(loans.df$id))
+length(unique(loans.df$partner_id))
+@
+
+A summary of the \textbf{funded\_date} variable indicates that the data was collected between 2005 and 2014.
+<<loans-date-summary>>=
+summary(loans.df$funded_date)
+@
+
+A summary of the \textbf{loan\_amount} indicates that half of the loans are under \$575 and only a quarter are over \$1,000. 
+<<>>=
+summary(loans.df$loan_amount)
+@
+
+Notice that most loans are \textbf{Small} (under \$500) and that very few are \textbf{Extra} (over \$5000.)
+<<loans-size-table>>=
+sort(table(loans.df$loan_size), decreasing=TRUE)
+@
+
+Most loans are \textbf{paid} with a significant number \textbf{in\_repayment}. 
+<<loans-status>>=
+sort(table(loans.df$status), decreasing=TRUE)
+@
+% fundraising - 
+% The loan has not yet been funded. This typically represents the kind of loans we advertise on the front page of Kiva.org and on the Lend tab. Lenders can only lend to loans that are fundraising. You can find the amount funded so far by checking funded_amount.
+% funded - 
+% This loan request has been completely funded and is not available for new loans by lenders. The loan may be waiting for disbursal to the borrower(s), assuming the loan was posted to Kiva before the field partner disbursed the funds. The field funded_date shows the exact time at which the loan was fully funded on Kiva.
+% in_repayment - 
+% The loan has been disbursed to the borrowers and they are in the process of using the funds and making payments on the loan to the field partner. Loans in this state may see journal updates and lenders to this loan will get repayments when the borrower's payments are reconciled with Kiva.
+% paid - 
+% The loan has been paid back in full by the borrower. The payments have been distributed back to the lenders and the loan is closed to most new activity on Kiva.
+% defaulted - 
+% Occassionaly, a borrower or a field partner may fail to make payments on a loan, either to the field partner or to Kiva, respectively. Usually when this happens, a loan simply becomes delinquent and remains in the in_repayment status. When a loan remains delinquent 6 months after the end of the loan payment schedule, the loan becomes defaulted. Usually defaulted loans will never be paid back and are a financial loss to the lenders to that loan. Most loans only default in part, but it is possible for the entire amount of the loan to not be repaid.
+% refunded - 
+% It's rare, but occasionally Kiva needs to refund the funded portion of the loan to lenders after the loan has been partially funded, fully funded, or even during repayment. There are many reasons why a loan could be refunded, but usually it is because there is an error with the loan posting or the loan itself has been found to violate Kiva's policy for loans. Currently, you cannot search for loans based on this status.
+
+<<echo=FALSE>>=
+sdf = as.vector(table(loans.df$delinquent))
+sdf.del = sdf[2]
+sdf.pct = round(100*sdf.del/sum(sdf))
+@
+Notice that approximately \Sexpr{sdf.pct}\% of loans are dilenquent. 
+<<>>=
+table(loans.df$delinquent)
+@
+
+<<echo=FALSE>>=
+sdf = names(sort(table(loans.df$sector), decreasing=TRUE))
+@
+A table of the \textbf{sector} variable indicates the three most common sectors are \textbf{\Sexpr{sdf[1]}}, \textbf{\Sexpr{sdf[2]}} and \textbf{\Sexpr{sdf[3]}}.
+<<>>=
+sort(table(loans.df$sector), decreasing=TRUE)
+@
+
+<<echo=FALSE>>=
+sdf = names(sort(table(loans.df$activity), decreasing=TRUE))
+@
+A table of the \textbf{activity} variable indicates the three most common sectors are \textbf{\Sexpr{sdf[1]}}, \textbf{\Sexpr{sdf[2]}} and \textbf{\Sexpr{sdf[3]}}.
+The activities frequency of at least 10,000 are listed.
+<<>>=
+activity.table.sorted = sort(table(loans.df$activity), decreasing=TRUE)
+activity.table.sorted[activity.table.sorted>=10000]
+@
+
+%subsection{Lenders dataframe: lenders.df}
+\subsection{Lenders dataframe: lenders.df}
+
+<<echo=FALSE>>=
+lenders.df.dim = dim(lenders.df) 
+@
+
+The \textbf{lenders.df} dataframe contains $\Sexpr{lenders.df.dim[1]}$ observations and $\Sexpr{lenders.df.dim[2]}$ variables. 
+Each observation corresponds to a lender, which is a user account on the \emph{Kiva.org} website. 
+<<>>=
+dim(lenders.df) 
+@
+
+The dataframe contains one identifier variable \textbf{lender\_id}.
+<<>>=
+length(unique(lenders.df$lender_id))
+@
+
+A summary of the numerical variable \textbf{loan\_count} indicates that at least half of the lenders contribute to at most a single loan and that over a quarter contribute to six (6) or more loans. 
+<<>>=
+summary(lenders.df$loan_count)
+@
+
+<<echo=FALSE>>=
+sdf = names(sort(table(lenders.df$country_code), decreasing=TRUE)[1:10])
+@
+A summary of the \textbf{country\_code} variable indicates that the three countries with the most lenders are \textbf{\Sexpr{sdf[1]}}, \Sexpr{sdf[2]} and \Sexpr{sdf[3]}.
+The countries with at least 1000 lenders are listed. 
+<<>>=
+country_code.sorted = sort(table(lenders.df$country_code), decreasing=TRUE)
+country_code.sorted[country_code.sorted>=1000]
+@
+
+The \textbf{loan\_because} variable contains the lender's reasons for lender on \emph{Kiva}.
+Notice from the plot and count of values with least 20 characters (below)  that the variable contains enough data to apply text mining techniques. 
+<<leners.df-loanbecause, message=FALSE>>=
+sum(nchar(lenders.df$loan_because) >= 20)
+qplot(log10(nchar(lenders.df$loan_because)))
+@
+The horizontal axis of the plot uses a logarithmic scale and indicates that the majority of the text in the \textbf{loan\_because} variable is between 80 and 120 characters.
+
+% The dataframe contains several textual variables. 
+% Each is converted into the \textbf{character} datatype.
+% <<>>=
+% lenders.df$personal_url = as.character(lenders.df$personal_url)
+% lenders.df$loan_because = as.character(lenders.df$loan_because) 
+% lenders.df$occupation = as.character(lenders.df$occupation)
+% lenders.df$occupational_info = as.character(lenders.df$occupational_info)
+% @
+
+% They are then converted into \textbf{UTF-8} character encoding.
+% <<>>=
+% lenders.df$occupation = iconv(lenders.df$occupation, to="UTF-8")
+% lenders.df$loan_because = iconv(lenders.df$loan_because, to="UTF-8")
+% lenders.df$occupational_info =  iconv(lenders.df$occupational_info, to="UTF-8")
+% @
+
+% Plots of each variable indicate that, with the possible exception of \textbf{occupation}, the variables contain enough characters to investigate with text mining techniques. 
+% <<message=FALSE>>=
+% qplot(log10(nchar(lenders.df$personal_url)))
+% qplot(log10(nchar(lenders.df$occupation)))
+% qplot(log10(nchar(lenders.df$loan_because)))
+% qplot(log10(nchar(lenders.df$occupational_info)))
+% @
+
+%subsection{Loans-lenders dataframe: loans.lenders.df}
+\subsection{Loans-lenders dataframe: loans.lenders.df}
+
+<<echo=FALSE>>=
+loans.lenders.df.dim = dim(loans.lenders.df)
+@
+
+The \textbf{loans.lenders.df} dataframe contains 
+\Sexpr{loans.lenders.df.dim[1]} observations and 
+\Sexpr{loans.lenders.df.dim[2]} variables. 
+Each observation is a unique loan-lender pair, where the lender contributed to the loan.
+<<>>=
+dim(loans.lenders.df)
+@
+
+Both \textbf{id} and \textbf{lender\_id} are identification variables which link to variables of the same name in the \textbf{loans.df} and \textbf{lenders.df} dataframes. 
+The \textbf{id} variable contains integers and the \textbf{lender\_ids} variable contains character vector of lenders IDs.
+
+<<>>=
+str(loans.lenders.df)
+@
+
+
+<<echo=FALSE, eval=FALSE>>=
+# 
+# Merging dataframes via loans.lenders.df
+#
+sdf = merge(x=loans.df[,c('id','name')],
+            y=loans.lenders.df[,c('id','lender_ids')])
+
+@
+
+\end{document}
+
+%section{Descriptive Analysis}
+\section{Descriptive Analysis}
+
+%subsection{Association rules: loans.df}
+\subsection{Association rules: loans.df}
+
+<<arules-status, message=FALSE>>=
+rhs.var = 'status'
+lhs.vars = c('sector','activity','loan_size') 
+# ADD: location.country_code
+rules = 
+  apriori(data=loans.df[,c(rhs.var,lhs.vars)],
+          parameter=list(supp=0.001, conf=0.001))
+summary(rules)
+@
+
+<<arules.status.lift>>=
+rules.lift = subset(rules, lift < 0.9 | lift > 1.1)
+@
+
+<<arules.status.paid>>=
+rules.lift.paid = 
+  subset(rules.lift, 
+         subset = rhs %in% c("status=paid"))
+inspect(sort(rules.lift.paid, by='lift'))
+@
+
+<<arules.status.repayment>>=
+rules.lift.repayment = 
+  subset(rules.lift, 
+         subset = rhs %in% c("status=in_repayment"))
+inspect(sort(rules.lift.repayment, by='lift'))
+@
+
+<<arules.status.defaulted>>=
+rules.lift.defaulted = 
+  subset(rules.lift, 
+         subset = rhs %in% c("status=defaulted"))
+inspect(sort(rules.lift.defaulted, by='lift'))
+@
+
+
+<<arules.delinquent>>=
+rhs.var = 'delinquent'
+lhs.vars
+rules = 
+  apriori(data=loans.df[,c(rhs.var,lhs.vars)],
+          parameter=list(supp=0.001, conf=0.001))
+summary(rules)
+rules.lift = subset(rules, lift < 0.9 | lift > 1.1)
+
+rules.lift.delinquent = 
+  subset(rules.lift, 
+         subset = rhs %in% c("delinquent=TRUE"))
+inspect(sort(rules.lift.delinquent, by='lift'))
+@
+
+% 
+% %subsection{Text mining: lenders.df}
+% \subsection{Text mining: lenders.df}
+% 
+% The following libraries are required for text mining analysis.
+% <<textmining-libraries, eval=FALSE, echo=FALSE>>=
+% library(tm)
+% library(SnowballC)
+% library(plyr)
+% library(ggplot2) # qplot
+% library(fpc) # cluster.stats
+% @
+% 
+% <<, eval=FALSE, echo=FALSE>>=
+% #echo=FALSE, eval=TRUE>>=
+% setwd('/users/home/doury/Dropbox/LUG - Private/Kiva')
+% @
+% 
+% <<, eval=FALSE, echo=FALSE>>=
+% year = as.numeric(format(lenders.df$member_since,"%Y"))
+% loan_because.nonzero = (0!=nchar(lenders.df$loan_because))
+% ndx = (year==2006) & loan_because.nonzero
+% loan_because.nonempty = lenders.df$loan_because[ndx]
+% @
+% 
+% <<text-mining, eval=FALSE, echo=FALSE>>=
+% #, eval=-c(1), echo=-c(1)>>=
+% corpus0 = Corpus(VectorSource(loan_because.nonempty))
+% corpus1 = tm_map(corpus0, function(x) iconv(enc2utf8(x), sub = "byte"))
+% corpus2 = tm_map(corpus1, tolower)
+% punct2space = function(x) gsub("[[:punct:]]"," ",x)
+% # consider leaving underscores 
+% corpus3 = tm_map(corpus2, punct2space)
+% corpus4 = tm_map(corpus3, removeNumbers)
+% corpus5 = tm_map(corpus4, removeWords, stopwords('english'))
+% corpusF = corpus5
+% # Stemming ???
+% # ignore.words = c('can','found','using','com','org','http','running','also',
+% #                  'use','see','used','will','please','able','according',
+% #                  'another','try','sure','seen','text','www')
+% # corpus6 = tm_map(corpus5, removeWords, ignore.words)
+% # corpusF = corpus6
+% @
+% 
+% <<textmining-corpus-sample, eval=FALSE, echo=FALSE>>=
+% inspect(corpusF[1:5])
+% @
+% 
+% <<textmining-td, eval=FALSE, echo=FALSE>>=
+% #, eval=-c(1), echo=-c(1)>>=
+% td = TermDocumentMatrix(corpusF,
+%                         control=list(weighting=weightTf,
+%                                      normalize=TRUE))
+% td = TermDocumentMatrix(corpusF, 
+%                         control=list(weighting=weightTfIdf,
+%                                      normalize=TRUE))
+% tdF = td
+% dim(td)
+% td0.999 = removeSparseTerms(td,0.999)
+% dim(td0.999)
+% tdF = td0.999
+% @
+% 
+% 
+% <<, eval=FALSE, echo=FALSE>>=
+% tdm = as.matrix(tdF) 
+% tdm[tdm>0] = 1
+% dtm = t(tdm)
+% @
+% 
+% <<, eval=FALSE, echo=FALSE>>=
+% system.time({ 
+%   dtdm = dist(dtm) 
+% }) 
+% # 5s 1,000 documents 1600 terms
+% # 5s 1,000 documents 676 terms
+% # 162s 10,000 documents with 212 terms
+% # try also: distance matrix using cosine similarity
+% @
+% <<>>=
+% word.count = nrow(tdm)
+% doc.count = ncol(tdm)
+% 
+% # Word list of those in more than 10% of the documents
+% findFreqTerms(tdF, lowfreq=0.01*doc.count)
+% 
+% 
+% system.time({
+%   kmeans.result = kmeans(dtdm,4)
+% })
+% system.time({
+%   kmeans.result = kmeans(dtm,4)
+% })
+% table(kmeans.result$cluster)
+% 
+% i = 3
+% dtm[i,dtm[i,]>0] # look at non-zero terms of first document
+% dtm[i,]
+% inspect(corpusF[i])
+% inspect(corpus0[i])
+% 
+% library(wordcloud)
+% v = sort(colSums(dtm),decreasing=TRUE)
+% d = data.frame(word=names(v),freq=v)
+% wordcloud(d$word, d$freq,max.words=20)
+% @
+% 
+% <<function-defs, eval=FALSE, echo=FALSE>>=
+% TopWordsInCluster = function(dtm, dtdm, clusters, i) { 
+%   # i = 1; clusters=kmeans.result$cluster
+%   dtm_names = colnames(dtm)
+%   row_count = sum(clusters == i)
+%   dtm_csums = apply(matrix(dtm[clusters == i, ],
+%                            nrow = row_count), 
+%                     2, # means of columns/terms
+%                     mean)
+%   dtm_ndx = sort(dtm_csums, 
+%                  decreasing=TRUE, 
+%                  index.return=TRUE)$ix
+%   
+%   return(list(name=dtm_names[dtm_ndx[1:5]], 
+%               freq=dtm_csums[dtm_ndx[1:5]],
+%               count=row_count,
+%               stats=cluster.stats(dtdm, clusters))) 
+% }
+% 
+% cluster.check = function(dtm, dtdm, cluster) { # cluster = cl
+%   TWIC.table = as.data.frame(cbind(cnt=table(cluster)))
+%   sdf = NULL
+%   for (i in 1:max(cluster) # i = 1
+%   ) {
+%     TWIC = TopWordsInCluster(dtm, dtdm, cluster, i) 
+%     sdf = rbind(sdf,TWIC$name)
+%   }
+%   TWIC.table[,'avg.silwidth'] = TWIC$stats$clus.avg.silwidths
+%   TWIC.table = cbind(TWIC.table, as.data.frame(sdf))
+%   return(TWIC.table)
+% }
+% @
+% 
+% <<cluster.check, eval=FALSE, echo=FALSE>>=
+% cluster.check(dtm, dtdm, kmeans(dtm,3)$cluster)
+% cluster.check(dtm, dtdm, kmeans(dtm,4)$cluster)
+% cluster.check(dtm, dtdm, kmeans(dtm,5)$cluster)
+% cluster.check(dtm, dtdm, kmeans(dtm,6)$cluster)
+% cluster.check(dtm, dtdm, kmeans(dtm,7)$cluster)
+% @
+% 
+% %subsection{Graphs: loans.lenders.df}
+% \subsection{Graphs: loans.lenders.df}
+% 
+% 
+% \section{Predictive analysis}
+% 
+% %subsection{Decision trees: ???}
+% 
+% Decision trees don't display well with many values for a categorical variable. 
+% <<eval=FALSE, rpart, message=FALSE>>=
+% library(rpart)
+% library(maptree)
+% loans.formula = status ~ loan.size+sector+repayment.interval
+% loans.rpart = 
+%   rpart(data = loans.df, 
+%         formula = loans.formula,
+%         control = rpart.control(maxdepth=3)
+%         )
+% print(loans.rpart)
+% draw.tree(loans.rpart, nodeinfo = TRUE)
+% @
+% 
+% <<eval=FALSE, rpart-2>>=
+% loans.formula = status ~ loan.amount+borrower.count+payments.numof
+% loans.rpart = 
+%   rpart(data = loans.df[,], 
+%         formula = loans.formula,
+%         control = rpart.control(maxdepth=3)
+%         )
+% print(loans.rpart)
+% draw.tree(loans.rpart, nodeinfo = TRUE)
+% @
+% 
+% <<eval=FALSE, eval=TRUE>>=
+% library(party)
+% loans.formula = status ~ sector+loan.size+borrower.count+payments.numof+sector+loan.size
+% loans.ctree = 
+%   ctree(data = loans.df[1:1000,], 
+%         formula = loans.formula,
+%         control = ctree_control(maxdepth = 3)
+%         )
+% plot(loans.ctree, type='simple')
+% plot(loans.ctree)
+% @
+% 
+% <<eval=FALSE>>=
+% # library(parallel)
+% # cl = makeCluster(20)
+% # clusterExport(cl,'fromJSON')
+% # stopCluster(cl)
+% @
+% 
+% \end{document}
