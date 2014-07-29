@@ -1,10 +1,11 @@
 library(RJSONIO) # fromJSON
 library(plyr) # rbind.fill
+#library(dplyr) # rbind.fill
 library(parallel) # mclapply
 library(ggplot2) # qplot
 library(arules) # apriori (assocation rules)
 
-baseDir = "/data/Kiva/Data"
+baseDir = "/data/Kiva"
 
 detectCores() # number of CPUs
 
@@ -28,11 +29,15 @@ list.from.json = function(aFile) {
     fromJSON(aFile, nullValue=NA)[[2]]
 }
 clusterExport(cl, 'list.from.json')
-
+#library(data.table)
 df.from.list = function(aList, fieldVector) { 
   data.frame(rbind(unlist(aList[fieldVector])),
              stringsAsFactors=FALSE)
 }
+# df.from.list = function(aList, fieldVector) { 
+#   data.table(rbind(unlist(aList[fieldVector])),
+#              stringsAsFactors=FALSE)
+# }
 clusterExport(cl, 'df.from.list')
 
 # 
@@ -54,18 +59,23 @@ system.time({
 # user  system elapsed 
 # 710.650 108.370  87.661 
 
+#clusterExport(cl, 'rbindlist')
+#clusterExport(cl, 'data.table')
 clusterExport(cl, 'keep.fields')
 system.time({
   loans.df = 
     rbind.fill(
+#     rbindlist(
       parLapply(cl=cl,
                 X=loansFilelist,
                 fun=function(x) {
                   rbind.fill(
+#                   rbindlist(
                     lapply(list.from.json(x),
                            function(y) {df.from.list(y,keep.fields)}))}))})
 # user  system elapsed 
 # 13.710   3.570  70.259 
+#stopCluster(cl) # Don't forget to run this before quiting RStudio.
 
 loans.df$id = as.numeric(loans.df$id)
 loans.df$partner_id = as.numeric(loans.df$partner_id) 
