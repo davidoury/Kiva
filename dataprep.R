@@ -1,4 +1,4 @@
-library(RJSONIO) # fromJSON 2
+library(RJSONIO) # fromJSON 2 3
 library(plyr) # rbind.fill
 #library(dplyr) # rbind.fill
 library(parallel) # mclapply
