@@ -1,20 +1,20 @@
-library(RJSONIO) # fromJSON 2 3
+# Kiva project - dataprep.R
+# Contains commands to read JSON data and create dataframes
+
+library(RJSONIO) # fromJSON
 library(plyr) # rbind.fill
-#library(dplyr) # rbind.fill
 library(parallel) # mclapply
 library(ggplot2) # qplot
-library(arules) # apriori (assocation rules)
 
-baseDir = "/data/Kiva"
+# Set the base directory which contains the 3 folders below
+# which contain the data files.
+#
+baseDir = "/data/sets/Kiva"
 
-detectCores() # number of CPUs
-
-cl = makeCluster(36) 
-# stopCluster(cl) # Don't forget to run this before quiting RStudio.
-clusterExport(cl, 'rbind.fill')
-clusterExport(cl, 'fromJSON')
-
-
+# Create 3 vectors of data file names:
+#   loansFilelist, lendersFilelist, loans_lendersFilelist
+# one for each folder (loans, lenders, loans_lenders)
+#
 loansFilelist = 
   list.files(paste(baseDir,sep='/','loans'),
              full.names=TRUE)
@@ -24,30 +24,122 @@ lendersFilelist =
 loans_lendersFilelist = 
   list.files(paste(baseDir,sep='/','loans_lenders'), 
              full.names=TRUE)
+loansFilelist[1:3] # Verify
 
+# The fromJSON function of the RJSONIO package returns a list 
+# created from the JSON contents of the input file
+#
+aList = fromJSON(loansFilelist[1])
+names(aList) # This list has two elements: "header" and "loans"
+# Explore the first element
+names(aList$header)
+aList$header
+# Explore the second element
+names(aList$loans) # There are no named elements
+length(aList$loans) # There are 500 elements (which are loans)
+names(aList$loans[[1]])
+
+# The list.from.json function returns the list of loans 
+# from its input file
+#
 list.from.json = function(aFile) {
-    fromJSON(aFile, nullValue=NA)[[2]]
+  fromJSON(aFile, nullValue=NA)[[2]]
+  # header data in the first item (ignored)
+  # loan data in the second item (returned)
 }
-clusterExport(cl, 'list.from.json')
-#library(data.table)
-df.from.list = function(aList, fieldVector) { 
-  data.frame(rbind(unlist(aList[fieldVector])),
+someLoans = list.from.json(loansFilelist[1])
+names(someLoans)
+length(someLoans)
+
+# Explore the first loan
+names(someLoans[[1]])
+# Some elements are single numbers or strings
+someLoans[[1]][c('id','name','status')]
+# Some elements are lists with a fixed number of (named) elements
+someLoans[[1]]$location
+# Some elements are lists with a variable number of elements
+sapply(someLoans[1:10], 
+       function(x) { length(x$payments) })
+length(someLoans[[1]]$payments)
+length(someLoans[[10]]$payments)
+
+# Function df.from.list creates a single row of a dataframe from a list
+# input aList - the list of input data
+# input somefields - the fields of aList to use in creating the dataframe row
+#
+df.from.list = function(aList,someFields) { 
+  data.frame(rbind(unlist(aList[someFields])),
              stringsAsFactors=FALSE)
 }
-# df.from.list = function(aList, fieldVector) { 
-#   data.table(rbind(unlist(aList[fieldVector])),
-#              stringsAsFactors=FALSE)
-# }
-clusterExport(cl, 'df.from.list')
+# For example, we create a dataframe row from aList$loans[[1]]$location
+# using only the fields country_code, country and town
+someLoans[[1]]$location
+df.from.list(someLoans[[1]]$location, 
+             c('country_code','country','town'))
+# Another example, notice what happens when we include the geo field
+df.from.list(someLoans[[1]]$location, 
+             c('country_code','geo'))
 
-# 
-# Create and preprocess lenders.df
-#
+# A better example, we create a dataframe row from someLoans[[1]] which
+# is the data for the first loan using only those fields in keep.fields
 keep.fields = c('id','partner_id','status','delinquent',
                 'loan_amount','sector','activity','funded_date','location')
+# Retrieve the fields of keep.fields from the first loan
+someLoans[[1]][keep.fields]
+# Now create a single row dataframe from these fields
+df.from.list(someLoans[[1]],
+             keep.fields)
 
-if (0) # Do not execute this first command, use parLapply below
-system.time({
+# Use df.from.list with input from the first loans dataset file
+loansFilelist[1] # the first file name of the loans dataset
+length(list.from.json(loansFilelist[1])) # the number of loans in that file
+names(list.from.json(loansFilelist[1])[[1]]) # the fields of the first loan
+df.from.list(list.from.json(loansFilelist[1])[[1]],
+             keep.fields) # the dataframe row for this first loan
+
+# This last command is found in the innermost command below (line 147)
+
+# Create aList with items which are the single row dataframes created
+# from each each loan of the first file of the loans datasets
+aList = 
+  lapply(list.from.json(loansFilelist[1]), # read only the first datafile
+         function(y) {df.from.list(y,keep.fields)})
+length(aList) # 500 elements one for each loan
+aList[1:3] # each element of the list is a dataframe row
+
+# Function rbind.fill takes a list of dataframes and returns 
+# a single dataframe with rows from the dataframes in the list
+aDataframe =  
+  rbind.fill(lapply(list.from.json(loansFilelist[1]), # read only the first file
+                    function(y) {df.from.list(y,keep.fields)}))
+aDataframe[1:3,]
+
+anotherList = mclapply(X=loansFilelist[1:3], # read first three files
+                       FUN=function(x) {
+                         rbind.fill(
+                           lapply(list.from.json(x),
+                                  function(y) {df.from.list(y,keep.fields)}))},
+                       mc.cores=detectCores())
+length(anotherList)
+sapply(anotherList, function(x) { class(x) })
+sapply(anotherList, function(x) { dim(x) })
+# anotherList contain 3 dataframes each with 500 rows and 14 columns
+anotherDataframe =
+  rbind.fill(
+      mclapply(X=loansFilelist[1:3], # read first three files
+               FUN=function(x) {
+                 rbind.fill(
+                   lapply(list.from.json(x),
+                          function(y) {df.from.list(y,keep.fields)}))},
+               mc.cores=detectCores()))
+class(anotherDataframe) # we have a data frame 
+dim(anotherDataframe)   # with 1500=3*500 rows and 14 columns
+# loans.df is created below using the above command but with all datafiles
+
+## Create loans.df dataframe
+#
+system.time({ # 112s
+  if(exists('loans.df')) rm(loans.df)
   loans.df = 
     rbind.fill(
       mclapply(X=loansFilelist,
@@ -56,98 +148,68 @@ system.time({
                    lapply(list.from.json(x),
                           function(y) {df.from.list(y,keep.fields)}))},
                mc.cores=detectCores()))})
-# user  system elapsed 
-# 710.650 108.370  87.661 
+object.size(loans.df) # 150MB
+# Notice that all fields are typed character. 
+str(loans.df)
+# This is important for speed and is a consequence of the stringsAsFactors
+# parameter of the df.from.list function. Creating factor variables takes longer.
+df.from.list
 
-#clusterExport(cl, 'rbindlist')
-#clusterExport(cl, 'data.table')
-clusterExport(cl, 'keep.fields')
-system.time({
-  loans.df = 
-    rbind.fill(
-#     rbindlist(
-      parLapply(cl=cl,
-                X=loansFilelist,
-                fun=function(x) {
-                  rbind.fill(
-#                   rbindlist(
-                    lapply(list.from.json(x),
-                           function(y) {df.from.list(y,keep.fields)}))}))})
-# user  system elapsed 
-# 13.710   3.570  70.259 
-#stopCluster(cl) # Don't forget to run this before quiting RStudio.
-
-loans.df$id = as.numeric(loans.df$id)
-loans.df$partner_id = as.numeric(loans.df$partner_id) 
-loans.df$loan_amount = as.numeric(loans.df$loan_amount)
-
+# Data transformations 
+#
+# setup proper types for the variables
+# 
+loans.df$id                    = as.numeric(loans.df$id)
+loans.df$partner_id            = as.numeric(loans.df$partner_id) 
+loans.df$loan_amount           = as.numeric(loans.df$loan_amount)
 loans.df$delinquent[is.na(loans.df$delinquent)] = FALSE
-
-loans.df$status = as.factor(loans.df$status)
-loans.df$activity = as.factor(loans.df$activity)
-loans.df$delinquent = as.factor(loans.df$delinquent)
-loans.df$sector = as.factor(loans.df$sector)
+loans.df$delinquent            = factor(loans.df$delinquent, labels=c('No','Yes'))
+loans.df$status                = factor(loans.df$status)
+loans.df$sector                = as.factor(loans.df$sector)
 loans.df$location.country_code = as.factor(loans.df$location.country_code)
-
-loans.df$funded_date = as.Date(loans.df$funded_date)
-
+loans.df$funded_date           = as.Date(loans.df$funded_date)
+# Create loan_size field as an ordered factor
 loans.df$loan_size = 
   ordered(cut(loans.df$loan_amount,
               c(-Inf,500,1000,5000,Inf)),
           labels = c('Small','Medium','Large','Extra'))
-
+# Delete these fields
 loans.df$location.country = NULL
 loans.df$location.town = NULL
 loans.df$location.geo.level = NULL
 loans.df$location.geo.pairs = NULL
 loans.df$location.geo.type = NULL
+str(loans.df) # Verify
 
-# 
-# Create and preprocess lenders.df
+# "One down one to go another town and one more show" --- Yes
+
+# lenders.df
 #
-keep.fields = c('lender_id','country_code','loan_count',
-                'loan_because','member_since')
-
-if (0) # Do not execute this first command, use parLapply below
 system.time({
+  if(exists('lenders.df')) rm(lenders.df)
+  keep.fields = c('lender_id','country_code','loan_count','loan_because')
   lenders.df = 
     rbind.fill(
-      mclapply(X=lendersFilelist,
+      mclapply(X=lendersFilelist, 
                FUN=function(x) {
                  rbind.fill(
                    lapply(list.from.json(x),
                           function(y) {df.from.list(y,keep.fields)}))},
                mc.cores=detectCores()))})
-# user  system elapsed 
-# 345.670  79.410  38.385 
-
-clusterExport(cl, 'keep.fields')
-system.time({
-  lenders.df = 
-    rbind.fill(
-      parLapply(cl=cl,
-               X=lendersFilelist,
-               fun=function(x) {
-                 rbind.fill(
-                   lapply(list.from.json(x),
-                          function(y) {df.from.list(y,keep.fields)}))}))})
-# user  system elapsed 
-# 0.140   0.060  19.717 
-
+str(lenders.df)
+object.size(lenders.df)
 lenders.df$lender_id =  factor(lenders.df$lender_id)
 lenders.df$country_code = factor(lenders.df$country_code)
 lenders.df$loan_count = as.numeric(lenders.df$loan_count)
-lenders.df$loan_because = iconv(lenders.df$loan_because, to="UTF-8")
-lenders.df$member_since = as.Date(lenders.df$member_since)
 
 #
-# Create and preprocess loans.lenders.df
+# loans-lenders dataset
 #
-df.or.null = function(x) { if(all(!is.na(x)))  data.frame(x) else NULL }
-clusterExport(cl, 'df.or.null')
-
-if (0) # Do not execute this first command, use parLapply below
+df.or.null = function(x) { 
+  if(any(is.na(x))) NULL else data.frame(x,stringsAsFactors=FALSE) 
+}
 system.time({
+  if(exists('loans.lenders.df')) rm(loans.lenders.df)
   loans.lenders.df = 
     rbind.fill(
       mclapply(X=loans_lendersFilelist, 
@@ -156,32 +218,151 @@ system.time({
                    lapply(list.from.json(x),
                           df.or.null))},
                mc.cores=detectCores()))})
-# user  system elapsed - workspace with loans.df and lenders.df
-# 534.120 451.950  54.261 
-# user  system elapsed - minimal workspace
-# 301.490 208.460  44.891 
+str(loans.lenders.df)
+object.size(loans.lenders.df)
 
-system.time({
-  loans.lenders.df = 
-    rbind.fill(
-      parLapply(cl=cl,
-                X=loans_lendersFilelist, 
-                fun=function(x) {
-                  rbind.fill(
-                    lapply(list.from.json(x),
-                           df.or.null))}))})
-# user  system elapsed 
-# 14.830   1.810  29.049 
-
-loans.lenders.df$lender_ids = factor(loans.lenders.df$lender_ids)
-
-#
-# Save all three dataframes to file <dataframes>
+# Save the three dataframes to disk
 #
 save(file="dataframes", 
      list=c('loans.df','lenders.df','loans.lenders.df'))
 
+# OLD STUFF BEFORE CHAR DATA WAS NOT SAVED AS FACTORS
+
+# Identifier variables 
+# id, name, partner_id, 
+length(unique(loans.df$id))
+length(unique(loans.df$name))
+length(unique(loans.df$partner_id))
+
+# Date-time variables (converted from chr to Date)
+# posted_date, funded_date, paid_date
+date.variables = c('posted_date', 
+                   'funded_date', 
+                   'paid_date')
+for(x in date.variables) { 
+  loans.df[,x] = as.Date(loans.df[,x])
+}
+summary(loans.df$posted_date)
+summary(loans.df$funded_date)
+summary(loans.df$paid_date)
+
+# Numeric variables
+# funded_amount, basket_amount, paid_amount, loan_amount, lender_count,
+numeric.variables = c('funded_amount', 
+                      'basket_amount', 
+                      'paid_amount', 
+                      'loan_amount', 
+                      'lender_count',
+                      'currency_exchange_loss_amount', 
+                      'planned_expiration_date')
+for (x in numeric.variables) {
+  message('Variable: ',x)
+  print(summary(loans.df[,x]))  
+}
+
+# Categorical variables
+# loan_size, status, video, sector, deliquent, bonus_credit_eligibility
+loans.df$loan_size = 
+  ordered(cut(loans.df$loan_amount,
+              c(-Inf,500,1000,5000,Inf)),
+          labels = c('Small','Medium','Large','Extra'))
+sort(table(loans.df$loan_size), decreasing=TRUE)
+sort(table(loans.df$status), decreasing=TRUE)
+
+# target variable
+loans.df$delinquent = factor(loans.df$delinquent, labels=c('No','Yes'))
+table(loans.df$delinquent), decreasing=TRUE)
+
+sum(!is.na(loans.df$video)) # all values NA
+
+sort(table(loans.df$sector), decreasing=TRUE)
+
+length(unique(loans.df$activity))
+activity.table = table(loans.df$activity)
+activity.table.sorted = sort(activity.table, decreasing=TRUE)
+activity.table.sorted[activity.table.sorted>10000]
+sum( activity.table.sorted[activity.table.sorted>10000] )
+
+loans.df$delinquent[is.na(loans.df$delinquent)] = FALSE
+table(loans.df$delinquent)
+
+table(loans.df$bonus_credit_eligibility)
+
+# Text variable
+# use
+loans.df$use = iconv(loans.df$use, to="UTF-8") # use is not yet in loans.df
+length(unique(loans.df$use))
+qplot(log10(nchar(loans.df$use)))
+
+##
+## lenders.df
+##
+
+str(lenders.df) # 1219775 obs, 13 variables
+  
+# Identifier variables 
+# lender_id, uid, name inviter_id
+length(unique(lenders.df$lender_id))
+length(unique(lenders.df$uid))
+length(unique(lenders.df$name))
+length(unique(lenders.df$inviter_id))
+
+# Date-time variables (converted from chr to Date)
+# member_since
+lenders.df$member_since = as.Date(lenders.df$member_since)
+summary(lenders.df$member_since)
+
+# Numeric variables
+# funded_amount, invitee_count
+numeric.variables = c('loan_count', 
+                      'invitee_count')
+for (x in numeric.variables) {
+  message('Variable: ',x)
+  print(summary(lenders.df[,x]))  
+}
+
+# Categorical variable
+# country_code
+sort(table(lenders.df$country_code), decreasing=TRUE)[1:10]
+
+# Text variables
+# whereabouts, occupation, occupational_info, loans_because
+
+# DOES THIS NEED TO HAPPEN NOW ???
+lenders.df$occupation = iconv(lenders.df$occupation, to="UTF-8")
+lenders.df$loan_because = iconv(lenders.df$loan_because, to="UTF-8")
+lenders.df$occupational_info =  iconv(lenders.df$occupational_info, to="UTF-8")
+
+qplot(log10(nchar(lenders.df$personal_url)))
+qplot(log10(nchar(lenders.df$loan_because)))
+qplot(log10(nchar(lenders.df$occupation)))
+qplot(log10(nchar(lenders.df$occupational_info)))
+
+##
+## loans.lenders.df
+##
+str(loans.lenders.df)
+str(loans.df$id)
+str(lenders.df$lender_id)
+
+# Save the three dataframes to disk
 #
-# Stop the cluster
+save(file="dataframes", 
+     list=c('loans.df','lenders.df','loans.lenders.df'))
+loans.df.2000 = loans.df[sample(nrow(loans.df),2000), ]
+lenders.df.2000 = lenders.df[sample(nrow(lenders.df),2000), ]
+loans.lenders.df.2000 = loans.lenders.df[sample(nrow(loans.lenders.df),2000), ]
+save(file="dataframes-2000", 
+     list=c('loans.df.2000','lenders.df.2000','loans.lenders.df.2000'))
+
+# 
+# Merging dataframes via loans.lenders.df
 #
-stopCluster(cl) # Don't forget to run this before quiting RStudio.
+sdf = merge(x=loans.df[,c('id','name')],
+            y=loans.lenders.df[,c('id','lender_ids')])
+
+id   name    lender_ids
+1 456062 Phally         lassi
+2 456062 Phally jenny85364780
+3 456062 Phally   christy5637
+# DONE
