@@ -185,7 +185,7 @@ str(loans.df) # Verify
 
 # lenders.df
 #
-system.time({
+system.time({ # 50s
   if(exists('lenders.df')) rm(lenders.df)
   keep.fields = c('lender_id','country_code','loan_count','loan_because')
   lenders.df = 
@@ -208,7 +208,7 @@ lenders.df$loan_count = as.numeric(lenders.df$loan_count)
 df.or.null = function(x) { 
   if(any(is.na(x))) NULL else data.frame(x,stringsAsFactors=FALSE) 
 }
-system.time({
+system.time({ # 32s
   if(exists('loans.lenders.df')) rm(loans.lenders.df)
   loans.lenders.df = 
     rbind.fill(
@@ -226,143 +226,4 @@ object.size(loans.lenders.df)
 save(file="dataframes", 
      list=c('loans.df','lenders.df','loans.lenders.df'))
 
-# OLD STUFF BEFORE CHAR DATA WAS NOT SAVED AS FACTORS
-
-# Identifier variables 
-# id, name, partner_id, 
-length(unique(loans.df$id))
-length(unique(loans.df$name))
-length(unique(loans.df$partner_id))
-
-# Date-time variables (converted from chr to Date)
-# posted_date, funded_date, paid_date
-date.variables = c('posted_date', 
-                   'funded_date', 
-                   'paid_date')
-for(x in date.variables) { 
-  loans.df[,x] = as.Date(loans.df[,x])
-}
-summary(loans.df$posted_date)
-summary(loans.df$funded_date)
-summary(loans.df$paid_date)
-
-# Numeric variables
-# funded_amount, basket_amount, paid_amount, loan_amount, lender_count,
-numeric.variables = c('funded_amount', 
-                      'basket_amount', 
-                      'paid_amount', 
-                      'loan_amount', 
-                      'lender_count',
-                      'currency_exchange_loss_amount', 
-                      'planned_expiration_date')
-for (x in numeric.variables) {
-  message('Variable: ',x)
-  print(summary(loans.df[,x]))  
-}
-
-# Categorical variables
-# loan_size, status, video, sector, deliquent, bonus_credit_eligibility
-loans.df$loan_size = 
-  ordered(cut(loans.df$loan_amount,
-              c(-Inf,500,1000,5000,Inf)),
-          labels = c('Small','Medium','Large','Extra'))
-sort(table(loans.df$loan_size), decreasing=TRUE)
-sort(table(loans.df$status), decreasing=TRUE)
-
-# target variable
-loans.df$delinquent = factor(loans.df$delinquent, labels=c('No','Yes'))
-table(loans.df$delinquent), decreasing=TRUE)
-
-sum(!is.na(loans.df$video)) # all values NA
-
-sort(table(loans.df$sector), decreasing=TRUE)
-
-length(unique(loans.df$activity))
-activity.table = table(loans.df$activity)
-activity.table.sorted = sort(activity.table, decreasing=TRUE)
-activity.table.sorted[activity.table.sorted>10000]
-sum( activity.table.sorted[activity.table.sorted>10000] )
-
-loans.df$delinquent[is.na(loans.df$delinquent)] = FALSE
-table(loans.df$delinquent)
-
-table(loans.df$bonus_credit_eligibility)
-
-# Text variable
-# use
-loans.df$use = iconv(loans.df$use, to="UTF-8") # use is not yet in loans.df
-length(unique(loans.df$use))
-qplot(log10(nchar(loans.df$use)))
-
-##
-## lenders.df
-##
-
-str(lenders.df) # 1219775 obs, 13 variables
-  
-# Identifier variables 
-# lender_id, uid, name inviter_id
-length(unique(lenders.df$lender_id))
-length(unique(lenders.df$uid))
-length(unique(lenders.df$name))
-length(unique(lenders.df$inviter_id))
-
-# Date-time variables (converted from chr to Date)
-# member_since
-lenders.df$member_since = as.Date(lenders.df$member_since)
-summary(lenders.df$member_since)
-
-# Numeric variables
-# funded_amount, invitee_count
-numeric.variables = c('loan_count', 
-                      'invitee_count')
-for (x in numeric.variables) {
-  message('Variable: ',x)
-  print(summary(lenders.df[,x]))  
-}
-
-# Categorical variable
-# country_code
-sort(table(lenders.df$country_code), decreasing=TRUE)[1:10]
-
-# Text variables
-# whereabouts, occupation, occupational_info, loans_because
-
-# DOES THIS NEED TO HAPPEN NOW ???
-lenders.df$occupation = iconv(lenders.df$occupation, to="UTF-8")
-lenders.df$loan_because = iconv(lenders.df$loan_because, to="UTF-8")
-lenders.df$occupational_info =  iconv(lenders.df$occupational_info, to="UTF-8")
-
-qplot(log10(nchar(lenders.df$personal_url)))
-qplot(log10(nchar(lenders.df$loan_because)))
-qplot(log10(nchar(lenders.df$occupation)))
-qplot(log10(nchar(lenders.df$occupational_info)))
-
-##
-## loans.lenders.df
-##
-str(loans.lenders.df)
-str(loans.df$id)
-str(lenders.df$lender_id)
-
-# Save the three dataframes to disk
-#
-save(file="dataframes", 
-     list=c('loans.df','lenders.df','loans.lenders.df'))
-loans.df.2000 = loans.df[sample(nrow(loans.df),2000), ]
-lenders.df.2000 = lenders.df[sample(nrow(lenders.df),2000), ]
-loans.lenders.df.2000 = loans.lenders.df[sample(nrow(loans.lenders.df),2000), ]
-save(file="dataframes-2000", 
-     list=c('loans.df.2000','lenders.df.2000','loans.lenders.df.2000'))
-
-# 
-# Merging dataframes via loans.lenders.df
-#
-sdf = merge(x=loans.df[,c('id','name')],
-            y=loans.lenders.df[,c('id','lender_ids')])
-
-id   name    lender_ids
-1 456062 Phally         lassi
-2 456062 Phally jenny85364780
-3 456062 Phally   christy5637
 # DONE
