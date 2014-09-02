@@ -150,9 +150,9 @@ system.time({ # 112s
                mc.cores=detectCores()))})
 object.size(loans.df) # 150MB
 # Notice that all fields are typed character. 
-str(loans.df)
 # This is important for speed and is a consequence of the stringsAsFactors
 # parameter of the df.from.list function. Creating factor variables takes longer.
+str(loans.df)
 df.from.list
 
 # Data transformations 
@@ -185,6 +185,10 @@ str(loans.df) # Verify
 
 # lenders.df
 #
+# The differences between the creation of loans.df and lenders.df are:
+# 1) the use of lendersFilelist instead of loansFilelist
+# 2) the variables specified in keep.fields
+# 3) the variable transformations
 system.time({ # 50s
   if(exists('lenders.df')) rm(lenders.df)
   keep.fields = c('lender_id','country_code','loan_count','loan_because')
@@ -202,8 +206,16 @@ lenders.df$lender_id =  factor(lenders.df$lender_id)
 lenders.df$country_code = factor(lenders.df$country_code)
 lenders.df$loan_count = as.numeric(lenders.df$loan_count)
 
+# loans.lenders.df
 #
-# loans-lenders dataset
+# The differences between the creation of loans.lenders.df and loans.df are:
+# 1) the use of loans_lendersFilelist instead of loansFilelist
+# 2) the use of the df.or.null function instead of df.from.list
+# 3) there are no variable transformations
+
+# Function df.or.null creates a single row of a dataframe from a list
+# input x - the list of input data
+# returns a single row dataframe if there are no NA values otherwise returns NULL
 #
 df.or.null = function(x) { 
   if(any(is.na(x))) NULL else data.frame(x,stringsAsFactors=FALSE) 
